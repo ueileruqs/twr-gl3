@@ -1,0 +1,538 @@
+
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8" />
+  <title>Coleta de tempo de ocupação de pista</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <style>
+    .autocomplete-list {
+      position: absolute;
+      background: #fff;
+      border: 1px solid #d1d5db;
+      z-index: 50;
+      max-height: 180px;
+      overflow-y: auto;
+      min-width: 90px;
+      width: 100%;
+      box-shadow: 0 2px 8px #0002;
+    }
+    .autocomplete-item {
+      padding: 4px 12px;
+      cursor: pointer;
+      font-size: 0.94rem;
+    }
+    .autocomplete-item-active,
+    .autocomplete-item:hover {
+      background: #f1f5f9;
+    }
+  </style>
+</head>
+<body class="bg-gray-100 min-h-screen w-full">
+  <div class="w-full min-h-screen flex flex-col">
+    <h1 class="text-2xl font-bold text-center p-3">Coleta de tempo de ocupação de pista</h1>
+    <div class="flex flex-col lg:flex-row gap-6 w-full flex-1">
+      <!-- Planilha POUSOS -->
+      <div class="flex-1 bg-white rounded-xl shadow p-2 md:p-6 flex flex-col overflow-hidden">
+        <div class="text-center font-semibold mb-2">POUSOS</div>
+        <div class="overflow-x-auto rounded flex-1 flex flex-col">
+          <div id="planilha1" class="flex-1"></div>
+          <div class="mt-2 text-center">
+            <button id="addLinhaBtn1" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-800 transition" type="button">Adicionar 100 Linhas</button>
+            <button id="exportBtn1" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-800 transition ml-1" type="button">Exportar para Excel</button>
+          </div>
+        </div>
+      </div>
+      <!-- Planilha DECOLAGENS -->
+      <div class="flex-1 bg-white rounded-xl shadow p-2 md:p-6 flex flex-col overflow-hidden">
+        <div class="text-center font-semibold mb-2">DECOLAGENS</div>
+        <div class="overflow-x-auto rounded flex-1 flex flex-col">
+          <div id="planilha2" class="flex-1"></div>
+          <div class="mt-2 text-center">
+            <button id="addLinhaBtn2" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-800 transition" type="button">Adicionar 100 Linhas</button>
+            <button id="exportBtn2" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-800 transition ml-1" type="button">Exportar para Excel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+<script>
+// Dados globais e funções comuns
+const callsignToICAO = {
+  "GLO1234": "B738", "TAM3456": "A320", "AZU998":  "E195", "PTABC":   "C172", "PRXYZ":   "SR22", 
+  "FAB2901": "B762", "FAB2401": "E99",  "GLO4321": "B738", "PTDEF":   "PA28", "TAM1122": "A321"
+};
+const aeroportosICAO = [
+  "SBCF","SBGL","SBGR","SBKP","SBSP","SBPA","SBRF","SBCT","SBSV","SBFL","SBSJ","SBVT","SBMQ","SBEG",
+  "SBRJ","SBPK","SBGO","SBPV","SBMS","SBAR","SBFZ","SBMA","SBSL","SBPV","SBBE","SBCY","SBSR","SBMG","SBME",
+  "SBGF","SBMO","SBJP","SBMO","SBTB","SBUL","SBPK","SBTE","SBSN","SBUR","SBCZ","SBCH","SBCJ","SBIZ",
+  "SBOI","SBCR","SBPL","SBPN","SBSO","SBTV","SBPB","SBUG","SBUF","SBJI","SBJU","SBMH","SBPB","SBST","SBPG",
+  "SBJV","SBAN","SBDN","SBPP","SBSC","SBTF","SDAM","SDCO","SNAX","SBPS","SBMY","SBTT","SBAA","SBMN","SBML",
+  "SBMT","SBPK","SBHK","SBTU","SBAE","SBEN","SBPC","SBMD","SBIH","SBPM","SBRA","SBPG","SBMK","SBFE","SBJV",
+  "SBPB","SBRB","SBUY","SBSG","SBVC","SBJH","SBMQ","SBCX","SBTT","SBTE","SBMO","SBCG","SBJA","SBSV","SBMT",
+  "SBCA","SBAU","SBJD","SBJT","SBMS","SBRE","SBWL","SDAG","SDMC","SDSC","SDVG","SNSI","SNGI","SNVB","SSER",
+  "SWEI","SBJR","SBSP","SBGL","SBGR","SBKP","SBFL"
+];
+
+function getBRDateTime() {
+  const now = new Date();
+  const dd = String(now.getDate()).padStart(2, '0');
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const yyyy = now.getFullYear();
+  const hh = String(now.getHours()).padStart(2, '0');
+  const min = String(now.getMinutes()).padStart(2, '0');
+  const ss = String(now.getSeconds()).padStart(2, '0');
+  return `${dd}/${mm}/${yyyy} ${hh}:${min}:${ss}`;
+}
+
+function makeAutocomplete(input, list) {
+  let currentFocus = -1;
+  let container = null;
+  function closeList() {
+    if (container) {
+      container.parentNode.removeChild(container);
+      container = null;
+    }
+  }
+  input.addEventListener("input", function () {
+    closeList();
+    const val = this.value.trim().toUpperCase();
+    if (!val) return;
+    container = document.createElement("div");
+    container.setAttribute("class", "autocomplete-list");
+    container.style.top = (input.offsetHeight+2) + "px";
+    input.parentNode.style.position = 'relative';
+    input.parentNode.appendChild(container);
+    let shown = 0;
+    for (const code of list) {
+      if (code.indexOf(val) === 0) {
+        const item = document.createElement("div");
+        item.innerHTML = `<span class="font-bold">${code.substr(0, val.length)}</span><span>${code.substr(val.length)}</span>`;
+        item.className = "autocomplete-item";
+        item.onclick = function () {
+          input.value = code;
+          closeList();
+          input.blur();
+        };
+        container.appendChild(item);
+        shown++;
+        if (shown >= 20) break;
+      }
+    }
+    if (shown === 0) {
+      const item = document.createElement("div");
+      item.innerHTML = `<span class="text-gray-400">Sem resultados</span>`;
+      item.className = "autocomplete-item cursor-default";
+      item.onclick = e=>e.stopPropagation();
+      container.appendChild(item);
+    }
+  });
+  input.addEventListener("keydown", function(e) {
+    if (!container) return;
+    let items = container.querySelectorAll(".autocomplete-item");
+    if (items.length === 0) return;
+    if (e.key === "ArrowDown") {
+      currentFocus++;
+      if (currentFocus >= items.length) currentFocus = 0;
+      setActive(items);
+    }
+    else if (e.key === "ArrowUp") {
+      currentFocus--;
+      if (currentFocus < 0) currentFocus = items.length - 1;
+      setActive(items);
+    }
+    else if (e.key === "Enter") {
+      e.preventDefault();
+      if (currentFocus > -1 && items[currentFocus]) {
+        items[currentFocus].click();
+      }
+      closeList();
+    }
+    else {
+      currentFocus = -1;
+    }
+  });
+  input.addEventListener("blur", function() {
+    setTimeout(closeList, 100);
+  });
+  function setActive(items) {
+    for (let i = 0; i < items.length; i++)
+      items[i].classList.remove("autocomplete-item-active");
+    if (currentFocus >= 0 && currentFocus < items.length)
+      items[currentFocus].classList.add("autocomplete-item-active");
+  }
+}
+
+function createPlanilha(containerId, addBtnId, exportBtnId, exportFilename, isDecolagens = false) {
+  // Definição dinâmica das colunas conforme tipo de planilha
+  let headers = [
+    "INDICATIVO", "TIPO AERONAVE (ICAO)", "RWY ARR", "ORIGEM",
+    "PASSOU FAF", "PASSOU CAB", "2400 M", "LIBEROU PISTA", "TWY", "OBSERVAÇÕES"
+  ];
+
+  if (isDecolagens) {
+    headers = [
+      "INDICATIVO", "TIPO AERONAVE (ICAO)", "RWY DEP", "DESTINO",
+      "SAÍDA POS 2", "AERONAVE ALINHOU", "INICIOU ROLAGEM", "CRUZOU 2400 M",
+      "CRUZOU CAB OPOSTA", "INICIOU CURVA", "PONTO CLR DEP", "OBSERVAÇÕES"
+    ];
+  }
+
+  const conta = document.getElementById(containerId);
+  const addLinhaBtn = document.getElementById(addBtnId);
+  const exportBtn = document.getElementById(exportBtnId);
+
+  conta.innerHTML = `
+    <div class="overflow-x-auto rounded">
+      <table class="w-full table-fixed border bg-white text-sm relative">
+        <colgroup>
+          ${headers.map(() => `<col class="min-w-[90px]" />`).join("\n")}
+        </colgroup>
+        <thead class="sticky top-0 z-10 bg-gray-200">
+          <tr>
+            ${headers.map(h => `<th class="border px-2 py-1">${h}</th>`).join('')}
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="text-xs text-gray-400 mt-2 text-center">
+      <ul>
+        <li><b>RWY DEP</b>: lista suspensa (15, 33, 10, 28) na Decolagens.</li>
+        <li><b>DESTINO</b>: auto-complete ICAO dos principais aeroportos do Brasil.</li>
+        <li><b>TIPO AERONAVE (ICAO)</b>: preenchida pelo callsign se cadastrado, mas pode ser editada livremente.</li>
+        <li>Duplo clique em qualquer célula insere data/hora em PT-BR (exceto INDICATIVO, OBSERVAÇÕES).</li>
+        <li><b>PONTO CLR DEP</b>: lista suspensa com opções "POSIÇÃO 2" e "POSIÇÃO 3".</li>
+      </ul>
+    </div>
+  `;
+
+  const tbody = conta.querySelector("tbody");
+
+  function addRow(data = Array(headers.length).fill("")) {
+    const row = document.createElement('tr');
+
+    // INDICATIVO
+    const indicativoCell = document.createElement('td');
+    indicativoCell.className = "border px-2 py-1";
+    const indicativoInput = document.createElement('input');
+    indicativoInput.type = "text";
+    indicativoInput.value = data[0] || "";
+    indicativoInput.className = "w-full p-1 border-none outline-none bg-transparent uppercase";
+    // Removido ondblclick de INDICATIVO
+    indicativoInput.onblur = checkAndFillType;
+    indicativoInput.oninput = checkAndFillType;
+    indicativoCell.appendChild(indicativoInput);
+
+    // TIPO AERONAVE (ICAO)
+    const tipoCell = document.createElement('td');
+    tipoCell.className = "border px-2 py-1";
+    const tipoInput = document.createElement('input');
+    tipoInput.type = "text";
+    tipoInput.value = data[1] || "";
+    tipoInput.className = "w-full p-1 border-none outline-none bg-transparent";
+
+    function checkAndFillType() {
+      const val = indicativoInput.value.trim().toUpperCase();
+      indicativoInput.value = val;
+      if (!tipoInput.value.trim()) {
+        tipoInput.value = callsignToICAO[val] || "";
+      }
+    }
+    tipoCell.appendChild(tipoInput);
+
+    row.appendChild(indicativoCell);
+    row.appendChild(tipoCell);
+
+    // Para as outras colunas, baseando-se em isDecolagens adicionamos inputs diferentes
+
+    // RWY DEP / RWY ARR
+    const rwyCell = document.createElement('td');
+    rwyCell.className = "border px-2 py-1";
+    const rwyOptions = ["", "15", "33", "10", "28"];
+    const rwySelect = document.createElement('select');
+    rwySelect.className = "w-full p-1 border rounded bg-white text-center";
+    rwyOptions.forEach(optVal => {
+      const opt = document.createElement('option');
+      opt.value = optVal;
+      opt.innerText = optVal;
+      if (data[2] === optVal) opt.selected = true;
+      rwySelect.appendChild(opt);
+    });
+    rwyCell.appendChild(rwySelect);
+    row.appendChild(rwyCell);
+
+    // ORIGEM / DESTINO (autocomplete)
+    const origemDestinoCell = document.createElement('td');
+    origemDestinoCell.className = "border px-2 py-1 relative";
+    const origemDestinoInput = document.createElement('input');
+    origemDestinoInput.type = "text";
+    origemDestinoInput.autocomplete = "off";
+    origemDestinoInput.value = data[3] || "";
+    origemDestinoInput.className = "w-full p-1 border-none outline-none bg-transparent uppercase";
+    makeAutocomplete(origemDestinoInput, aeroportosICAO);
+    origemDestinoInput.ondblclick = function(e){
+      e.preventDefault();
+      origemDestinoInput.value = "";
+      setTimeout(()=>origemDestinoInput.focus(),50);
+    };
+    origemDestinoCell.appendChild(origemDestinoInput);
+    row.appendChild(origemDestinoCell);
+
+    // Colunas que recebem duplo clique com data/hora (ou não) conforme tipo
+    // Para POUSOS (não isDecolagens) - col index 4 a 9
+    // Para DECOLAGENS (isDecolagens) - col index 4 a 11
+
+    // Vamos criar as colunas que no original são text inputs e podem receber data/hora via duplo clique:
+    // POUSOS: PASSOU FAF (4), PASSOU CAB (5), 2400 M (6), LIBEROU PISTA (7), TWY (8), OBSERVAÇÕES (9)
+    // Decolagens: SAÍDA POS 2 (4), AERONAVE ALINHOU (5), INICIOU ROLAGEM (6), CRUZOU 2400 M (7), CRUZOU CAB OPOSTA (8),
+    // INICIOU CURVA (9), PONTO CLR DEP (10), OBSERVAÇÕES (11)
+
+    if (!isDecolagens) {
+      // Campos 4 a 8 são inputs com ondblclick data/hora
+      for (let i = 4; i <= 8; i++) {
+        const cell = document.createElement('td');
+        cell.className = "border px-2 py-1";
+        const input = document.createElement('input');
+        input.type = "text";
+        input.value = data[i] || "";
+        input.className = "w-full p-1 border-none outline-none bg-transparent";
+        input.ondblclick = function(e) {
+          e.preventDefault();
+          this.value = getBRDateTime();
+        };
+        cell.appendChild(input);
+        row.appendChild(cell);
+      }
+      // OBSERVAÇÕES (índice 9), sem duplo clique
+      const obsCell = document.createElement('td');
+      obsCell.className = "border px-2 py-1";
+      const obsInput = document.createElement('input');
+      obsInput.type = "text";
+      obsInput.value = data[9] || "";
+      obsInput.className = "w-full p-1 border-none outline-none bg-transparent";
+      // Sem ondblclick
+      obsCell.appendChild(obsInput);
+      row.appendChild(obsCell);
+    } else {
+      // DECOLAGENS: cria as colunas específicas
+
+      // 4 - SAÍDA POS 2 (input com duplo clique)
+      const saidaPos2Cell = document.createElement('td');
+      saidaPos2Cell.className = "border px-2 py-1";
+      const saidaPos2Input = document.createElement('input');
+      saidaPos2Input.type = "text";
+      saidaPos2Input.value = data[4] || "";
+      saidaPos2Input.className = "w-full p-1 border-none outline-none bg-transparent";
+      saidaPos2Input.ondblclick = function(e) {
+        e.preventDefault();
+        this.value = getBRDateTime();
+      };
+      saidaPos2Cell.appendChild(saidaPos2Input);
+      row.appendChild(saidaPos2Cell);
+
+      // 5 - AERONAVE ALINHOU (input com duplo clique)
+      const alinharCell = document.createElement('td');
+      alinharCell.className = "border px-2 py-1";
+      const alinharInput = document.createElement('input');
+      alinharInput.type = "text";
+      alinharInput.value = data[5] || "";
+      alinharInput.className = "w-full p-1 border-none outline-none bg-transparent";
+      alinharInput.ondblclick = function(e) {
+        e.preventDefault();
+        this.value = getBRDateTime();
+      };
+      alinharCell.appendChild(alinharInput);
+      row.appendChild(alinharCell);
+
+      // 6 - INICIOU ROLAGEM (input com duplo clique)
+      const iniciouRoloCell = document.createElement('td');
+      iniciouRoloCell.className = "border px-2 py-1";
+      const iniciouRoloInput = document.createElement('input');
+      iniciouRoloInput.type = "text";
+      iniciouRoloInput.value = data[6] || "";
+      iniciouRoloInput.className = "w-full p-1 border-none outline-none bg-transparent";
+      iniciouRoloInput.ondblclick = function(e) {
+        e.preventDefault();
+        this.value = getBRDateTime();
+      };
+      iniciouRoloCell.appendChild(iniciouRoloInput);
+      row.appendChild(iniciouRoloCell);
+
+      // 7 - CRUZOU 2400 M (input com duplo clique)
+      const cruzou2400Cell = document.createElement('td');
+      cruzou2400Cell.className = "border px-2 py-1";
+      const cruzou2400Input = document.createElement('input');
+      cruzou2400Input.type = "text";
+      cruzou2400Input.value = data[7] || "";
+      cruzou2400Input.className = "w-full p-1 border-none outline-none bg-transparent";
+      cruzou2400Input.ondblclick = function(e) {
+        e.preventDefault();
+        this.value = getBRDateTime();
+      };
+      cruzou2400Cell.appendChild(cruzou2400Input);
+      row.appendChild(cruzou2400Cell);
+
+      // 8 - CRUZOU CAB OPOSTA (input com duplo clique)
+      const cruzouCabCell = document.createElement('td');
+      cruzouCabCell.className = "border px-2 py-1";
+      const cruzouCabInput = document.createElement('input');
+      cruzouCabInput.type = "text";
+      cruzouCabInput.value = data[8] || "";
+      cruzouCabInput.className = "w-full p-1 border-none outline-none bg-transparent";
+      cruzouCabInput.ondblclick = function(e) {
+        e.preventDefault();
+        this.value = getBRDateTime();
+      };
+      cruzouCabCell.appendChild(cruzouCabInput);
+      row.appendChild(cruzouCabCell);
+
+      // 9 - INICIOU CURVA (input com duplo clique)
+      const iniciouCurvaCell = document.createElement('td');
+      iniciouCurvaCell.className = "border px-2 py-1";
+      const iniciouCurvaInput = document.createElement('input');
+      iniciouCurvaInput.type = "text";
+      iniciouCurvaInput.value = data[9] || "";
+      iniciouCurvaInput.className = "w-full p-1 border-none outline-none bg-transparent";
+      iniciouCurvaInput.ondblclick = function(e) {
+        e.preventDefault();
+        this.value = getBRDateTime();
+      };
+      iniciouCurvaCell.appendChild(iniciouCurvaInput);
+      row.appendChild(iniciouCurvaCell);
+
+      // 10 - PONTO CLR DEP (lista suspensa com POSIÇÃO 2 e POSIÇÃO 3)
+      const pontoClrDepCell = document.createElement('td');
+      pontoClrDepCell.className = "border px-2 py-1";
+      const pontoClrDepSelect = document.createElement('select');
+      pontoClrDepSelect.className = "w-full p-1 border rounded bg-white text-center";
+      ["", "POSIÇÃO 2", "POSIÇÃO 3"].forEach(optVal => {
+        const opt = document.createElement('option');
+        opt.value = optVal;
+        opt.innerText = optVal;
+        if(data[10] === optVal) opt.selected = true;
+        pontoClrDepSelect.appendChild(opt);
+      });
+      pontoClrDepCell.appendChild(pontoClrDepSelect);
+      row.appendChild(pontoClrDepCell);
+
+      // 11 - OBSERVAÇÕES (sem duplo clique)
+      const obsCell = document.createElement('td');
+      obsCell.className = "border px-2 py-1";
+      const obsInput = document.createElement('input');
+      obsInput.type = "text";
+      obsInput.value = data[11] || "";
+      obsInput.className = "w-full p-1 border-none outline-none bg-transparent";
+      // Sem ondblclick
+      obsCell.appendChild(obsInput);
+      row.appendChild(obsCell);
+
+    }
+
+    tbody.appendChild(row);
+    return row;
+  }
+
+  // Inicializa 60 linhas
+  for(let i=0; i<60; i++) addRow();
+
+  // Botão adicionar 100 linhas na parte inferior
+  addLinhaBtn.onclick = () => {
+    let firstNewRow = null;
+    for(let i=0; i<100; i++) {
+      const newRow = addRow();
+      if(!firstNewRow) firstNewRow = newRow;
+    }
+    if(firstNewRow) firstNewRow.scrollIntoView({behavior:'smooth', block:'nearest'});
+  };
+
+  // Botão exportar
+  exportBtn.onclick = function() {
+    const rows = Array.from(tbody.getElementsByTagName('tr'));
+    const result = [headers];
+    rows.forEach(row => {
+      const cells = Array.from(row.getElementsByTagName('td'));
+      const rowData = cells.map((cell, idx) => {
+        if (isDecolagens && idx === 10) {
+          // PONTO CLR DEP col, select element
+          return cell.querySelector('select').value;
+        }
+        else if ((!isDecolagens && idx === 2) || (isDecolagens && idx === 2)) {
+          // RWY select element for both
+          return cell.querySelector('select').value;
+        } else if (isDecolagens && idx === 10) {
+          return cell.querySelector('select').value;
+        } else if (isDecolagens && idx === 11) {
+          return cell.querySelector('input').value;
+        } else {
+          return cell.querySelector('input').value;
+        }
+      });
+      result.push(rowData);
+    });
+
+    const ws = XLSX.utils.aoa_to_sheet(result);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, exportFilename);
+    XLSX.writeFile(wb, exportFilename + ".xlsx");
+  };
+}
+
+// Criação das planilhas, indicando que a segunda é DECOLAGENS com colunas alteradas
+createPlanilha("planilha1", "addLinhaBtn1", "exportBtn1", "POUSOS", false);
+createPlanilha("planilha2", "addLinhaBtn2", "exportBtn2", "DECOLAGENS", true);
+
+</script>
+<script>window.parent.postMessage({ action: "ready" }, "*"); 
+ 
+window.console = new Proxy(console, {
+  get(target, prop) {
+    if (['log', 'warn', 'error'].includes(prop)) {
+      return new Proxy(target[prop], {
+        apply(fn, thisArg, args) {
+          fn.apply(thisArg, args);
+          window.parent.postMessage({ action: 'console', 
+            type: prop, 
+            args: args.map((arg) => {
+              try {
+                return JSON.stringify(arg).replace(/^["']|["']$/g, '');
+              } catch (e) {
+                return arg;
+              }
+            }) 
+          }, '*');
+        }
+      });
+    }
+    return target[prop];
+  }
+});
+</script>
+<script>window.parent.postMessage({ action: "ready" }, "*"); 
+ 
+window.console = new Proxy(console, {
+  get(target, prop) {
+    if (['log', 'warn', 'error'].includes(prop)) {
+      return new Proxy(target[prop], {
+        apply(fn, thisArg, args) {
+          fn.apply(thisArg, args);
+          window.parent.postMessage({ action: 'console', 
+            type: prop, 
+            args: args.map((arg) => {
+              try {
+                return JSON.stringify(arg).replace(/^["']|["']$/g, '');
+              } catch (e) {
+                return arg;
+              }
+            }) 
+          }, '*');
+        }
+      });
+    }
+    return target[prop];
+  }
+});
+</script></body>
+</html>
