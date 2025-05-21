@@ -61,7 +61,7 @@
 <script>
 // Dados globais e funções comuns
 const callsignToICAO = {
-  "GLO1234": "B738", "TAM3456": "A320", "AZU998":  "E195", "PTABC":   "C172", "PRXYZ":   "SR22", 
+  "GLO1234": "B738", "TAM3456": "A320", "AZU998":  "E195", "PTABC":   "C172", "PRXYZ":   "SR22",
   "FAB2901": "B762", "FAB2401": "E99",  "GLO4321": "B738", "PTDEF":   "PA28", "TAM1122": "A321"
 };
 const aeroportosICAO = [
@@ -115,6 +115,7 @@ function makeAutocomplete(input, list) {
           input.value = code;
           closeList();
           input.blur();
+          saveDataGlobal();
         };
         container.appendChild(item);
         shown++;
@@ -165,13 +166,25 @@ function makeAutocomplete(input, list) {
   }
 }
 
+let globalSaveFunctions = [];
+
+function saveDataGlobal() {
+  globalSaveFunctions.forEach(fn => fn());
+}
+
+function exportTableToExcel(table, filename) {
+  const wb = XLSX.utils.book_new();
+  // Extract table data including headers
+  const ws = XLSX.utils.table_to_sheet(table);
+  XLSX.utils.book_append_sheet(wb, ws, "Dados");
+  XLSX.writeFile(wb, filename + ".xlsx");
+}
+
 function createPlanilha(containerId, addBtnId, exportBtnId, exportFilename, isDecolagens = false) {
-  // Definição dinâmica das colunas conforme tipo de planilha
   let headers = [
     "INDICATIVO", "TIPO AERONAVE (ICAO)", "RWY ARR", "ORIGEM",
     "PASSOU FAF", "PASSOU CAB", "2400 M", "LIBEROU PISTA", "TWY", "OBSERVAÇÕES"
   ];
-
   if (isDecolagens) {
     headers = [
       "INDICATIVO", "TIPO AERONAVE (ICAO)", "RWY DEP", "DESTINO",
@@ -179,14 +192,13 @@ function createPlanilha(containerId, addBtnId, exportBtnId, exportFilename, isDe
       "CRUZOU CAB OPOSTA", "INICIOU CURVA", "PONTO CLR DEP", "OBSERVAÇÕES"
     ];
   }
-
+  const localStorageKey = "dados_planilha_" + exportFilename;
   const conta = document.getElementById(containerId);
   const addLinhaBtn = document.getElementById(addBtnId);
   const exportBtn = document.getElementById(exportBtnId);
-
   conta.innerHTML = `
     <div class="overflow-x-auto rounded">
-      <table class="w-full table-fixed border bg-white text-sm relative">
+      <table id="${containerId}_table" class="w-full table-fixed border bg-white text-sm relative">
         <colgroup>
           ${headers.map(() => `<col class="min-w-[90px]" />`).join("\n")}
         </colgroup>
@@ -208,12 +220,47 @@ function createPlanilha(containerId, addBtnId, exportBtnId, exportFilename, isDe
       </ul>
     </div>
   `;
-
   const tbody = conta.querySelector("tbody");
-
+  function saveData() {
+    const rows = Array.from(tbody.getElementsByTagName('tr'));
+    const result = [];
+    rows.forEach(row => {
+      const cells = Array.from(row.getElementsByTagName('td'));
+      const rowData = cells.map((cell, idx) => {
+        if (isDecolagens && idx === 10) {
+          return cell.querySelector('select').value;
+        } else if (idx === 2) {
+          return cell.querySelector('select').value;
+        } else if (isDecolagens && idx === 11) {
+          return cell.querySelector('input').value;
+        } else {
+          return cell.querySelector('input').value;
+        }
+      });
+      result.push(rowData);
+    });
+    localStorage.setItem(localStorageKey, JSON.stringify(result));
+  }
+  function loadData() {
+    const saved = localStorage.getItem(localStorageKey);
+    if (saved) {
+      try {
+        const dataArray = JSON.parse(saved);
+        if (Array.isArray(dataArray)) {
+          tbody.innerHTML = "";
+          dataArray.forEach(dataRow => {
+            addRow(dataRow);
+          });
+          return true;
+        }
+      } catch (e) {
+        console.warn("Erro ao carregar dados salvos:", e);
+      }
+    }
+    return false;
+  }
   function addRow(data = Array(headers.length).fill("")) {
     const row = document.createElement('tr');
-
     // INDICATIVO
     const indicativoCell = document.createElement('td');
     indicativoCell.className = "border px-2 py-1";
@@ -221,19 +268,9 @@ function createPlanilha(containerId, addBtnId, exportBtnId, exportFilename, isDe
     indicativoInput.type = "text";
     indicativoInput.value = data[0] || "";
     indicativoInput.className = "w-full p-1 border-none outline-none bg-transparent uppercase";
-    // Removido ondblclick de INDICATIVO
     indicativoInput.onblur = checkAndFillType;
-    indicativoInput.oninput = checkAndFillType;
+    indicativoInput.oninput = e => { checkAndFillType(); saveData(); };
     indicativoCell.appendChild(indicativoInput);
-
-    // TIPO AERONAVE (ICAO)
-    const tipoCell = document.createElement('td');
-    tipoCell.className = "border px-2 py-1";
-    const tipoInput = document.createElement('input');
-    tipoInput.type = "text";
-    tipoInput.value = data[1] || "";
-    tipoInput.className = "w-full p-1 border-none outline-none bg-transparent";
-
     function checkAndFillType() {
       const val = indicativoInput.value.trim().toUpperCase();
       indicativoInput.value = val;
@@ -241,14 +278,18 @@ function createPlanilha(containerId, addBtnId, exportBtnId, exportFilename, isDe
         tipoInput.value = callsignToICAO[val] || "";
       }
     }
+    // TIPO AERONAVE (ICAO)
+    const tipoCell = document.createElement('td');
+    tipoCell.className = "border px-2 py-1";
+    const tipoInput = document.createElement('input');
+    tipoInput.type = "text";
+    tipoInput.value = data[1] || "";
+    tipoInput.className = "w-full p-1 border-none outline-none bg-transparent";
+    tipoInput.oninput = saveData;
     tipoCell.appendChild(tipoInput);
-
     row.appendChild(indicativoCell);
     row.appendChild(tipoCell);
-
-    // Para as outras colunas, baseando-se em isDecolagens adicionamos inputs diferentes
-
-    // RWY DEP / RWY ARR
+    // RWY select
     const rwyCell = document.createElement('td');
     rwyCell.className = "border px-2 py-1";
     const rwyOptions = ["", "15", "33", "10", "28"];
@@ -261,10 +302,10 @@ function createPlanilha(containerId, addBtnId, exportBtnId, exportFilename, isDe
       if (data[2] === optVal) opt.selected = true;
       rwySelect.appendChild(opt);
     });
+    rwySelect.onchange = saveData;
     rwyCell.appendChild(rwySelect);
     row.appendChild(rwyCell);
-
-    // ORIGEM / DESTINO (autocomplete)
+    // ORIGEM / DESTINO autocomplete input
     const origemDestinoCell = document.createElement('td');
     origemDestinoCell.className = "border px-2 py-1 relative";
     const origemDestinoInput = document.createElement('input');
@@ -273,25 +314,15 @@ function createPlanilha(containerId, addBtnId, exportBtnId, exportFilename, isDe
     origemDestinoInput.value = data[3] || "";
     origemDestinoInput.className = "w-full p-1 border-none outline-none bg-transparent uppercase";
     makeAutocomplete(origemDestinoInput, aeroportosICAO);
-    origemDestinoInput.ondblclick = function(e){
+    origemDestinoInput.ondblclick = e => {
       e.preventDefault();
       origemDestinoInput.value = "";
-      setTimeout(()=>origemDestinoInput.focus(),50);
+      setTimeout(() => origemDestinoInput.focus(), 50);
     };
+    origemDestinoInput.oninput = saveData;
     origemDestinoCell.appendChild(origemDestinoInput);
     row.appendChild(origemDestinoCell);
-
-    // Colunas que recebem duplo clique com data/hora (ou não) conforme tipo
-    // Para POUSOS (não isDecolagens) - col index 4 a 9
-    // Para DECOLAGENS (isDecolagens) - col index 4 a 11
-
-    // Vamos criar as colunas que no original são text inputs e podem receber data/hora via duplo clique:
-    // POUSOS: PASSOU FAF (4), PASSOU CAB (5), 2400 M (6), LIBEROU PISTA (7), TWY (8), OBSERVAÇÕES (9)
-    // Decolagens: SAÍDA POS 2 (4), AERONAVE ALINHOU (5), INICIOU ROLAGEM (6), CRUZOU 2400 M (7), CRUZOU CAB OPOSTA (8),
-    // INICIOU CURVA (9), PONTO CLR DEP (10), OBSERVAÇÕES (11)
-
     if (!isDecolagens) {
-      // Campos 4 a 8 são inputs com ondblclick data/hora
       for (let i = 4; i <= 8; i++) {
         const cell = document.createElement('td');
         cell.className = "border px-2 py-1";
@@ -299,111 +330,47 @@ function createPlanilha(containerId, addBtnId, exportBtnId, exportFilename, isDe
         input.type = "text";
         input.value = data[i] || "";
         input.className = "w-full p-1 border-none outline-none bg-transparent";
-        input.ondblclick = function(e) {
+        input.ondblclick = e => {
           e.preventDefault();
-          this.value = getBRDateTime();
+          input.value = getBRDateTime();
+          saveData();
         };
+        input.oninput = saveData;
         cell.appendChild(input);
         row.appendChild(cell);
       }
-      // OBSERVAÇÕES (índice 9), sem duplo clique
       const obsCell = document.createElement('td');
       obsCell.className = "border px-2 py-1";
       const obsInput = document.createElement('input');
       obsInput.type = "text";
       obsInput.value = data[9] || "";
       obsInput.className = "w-full p-1 border-none outline-none bg-transparent";
-      // Sem ondblclick
+      obsInput.oninput = saveData;
       obsCell.appendChild(obsInput);
       row.appendChild(obsCell);
     } else {
-      // DECOLAGENS: cria as colunas específicas
-
-      // 4 - SAÍDA POS 2 (input com duplo clique)
-      const saidaPos2Cell = document.createElement('td');
-      saidaPos2Cell.className = "border px-2 py-1";
-      const saidaPos2Input = document.createElement('input');
-      saidaPos2Input.type = "text";
-      saidaPos2Input.value = data[4] || "";
-      saidaPos2Input.className = "w-full p-1 border-none outline-none bg-transparent";
-      saidaPos2Input.ondblclick = function(e) {
-        e.preventDefault();
-        this.value = getBRDateTime();
+      const createDCellWithDate = (val) => {
+        const cell = document.createElement('td');
+        cell.className = "border px-2 py-1";
+        const input = document.createElement('input');
+        input.type = "text";
+        input.value = val || "";
+        input.className = "w-full p-1 border-none outline-none bg-transparent";
+        input.ondblclick = e => {
+          e.preventDefault();
+          input.value = getBRDateTime();
+          saveData();
+        };
+        input.oninput = saveData;
+        cell.appendChild(input);
+        return cell;
       };
-      saidaPos2Cell.appendChild(saidaPos2Input);
-      row.appendChild(saidaPos2Cell);
-
-      // 5 - AERONAVE ALINHOU (input com duplo clique)
-      const alinharCell = document.createElement('td');
-      alinharCell.className = "border px-2 py-1";
-      const alinharInput = document.createElement('input');
-      alinharInput.type = "text";
-      alinharInput.value = data[5] || "";
-      alinharInput.className = "w-full p-1 border-none outline-none bg-transparent";
-      alinharInput.ondblclick = function(e) {
-        e.preventDefault();
-        this.value = getBRDateTime();
-      };
-      alinharCell.appendChild(alinharInput);
-      row.appendChild(alinharCell);
-
-      // 6 - INICIOU ROLAGEM (input com duplo clique)
-      const iniciouRoloCell = document.createElement('td');
-      iniciouRoloCell.className = "border px-2 py-1";
-      const iniciouRoloInput = document.createElement('input');
-      iniciouRoloInput.type = "text";
-      iniciouRoloInput.value = data[6] || "";
-      iniciouRoloInput.className = "w-full p-1 border-none outline-none bg-transparent";
-      iniciouRoloInput.ondblclick = function(e) {
-        e.preventDefault();
-        this.value = getBRDateTime();
-      };
-      iniciouRoloCell.appendChild(iniciouRoloInput);
-      row.appendChild(iniciouRoloCell);
-
-      // 7 - CRUZOU 2400 M (input com duplo clique)
-      const cruzou2400Cell = document.createElement('td');
-      cruzou2400Cell.className = "border px-2 py-1";
-      const cruzou2400Input = document.createElement('input');
-      cruzou2400Input.type = "text";
-      cruzou2400Input.value = data[7] || "";
-      cruzou2400Input.className = "w-full p-1 border-none outline-none bg-transparent";
-      cruzou2400Input.ondblclick = function(e) {
-        e.preventDefault();
-        this.value = getBRDateTime();
-      };
-      cruzou2400Cell.appendChild(cruzou2400Input);
-      row.appendChild(cruzou2400Cell);
-
-      // 8 - CRUZOU CAB OPOSTA (input com duplo clique)
-      const cruzouCabCell = document.createElement('td');
-      cruzouCabCell.className = "border px-2 py-1";
-      const cruzouCabInput = document.createElement('input');
-      cruzouCabInput.type = "text";
-      cruzouCabInput.value = data[8] || "";
-      cruzouCabInput.className = "w-full p-1 border-none outline-none bg-transparent";
-      cruzouCabInput.ondblclick = function(e) {
-        e.preventDefault();
-        this.value = getBRDateTime();
-      };
-      cruzouCabCell.appendChild(cruzouCabInput);
-      row.appendChild(cruzouCabCell);
-
-      // 9 - INICIOU CURVA (input com duplo clique)
-      const iniciouCurvaCell = document.createElement('td');
-      iniciouCurvaCell.className = "border px-2 py-1";
-      const iniciouCurvaInput = document.createElement('input');
-      iniciouCurvaInput.type = "text";
-      iniciouCurvaInput.value = data[9] || "";
-      iniciouCurvaInput.className = "w-full p-1 border-none outline-none bg-transparent";
-      iniciouCurvaInput.ondblclick = function(e) {
-        e.preventDefault();
-        this.value = getBRDateTime();
-      };
-      iniciouCurvaCell.appendChild(iniciouCurvaInput);
-      row.appendChild(iniciouCurvaCell);
-
-      // 10 - PONTO CLR DEP (lista suspensa com POSIÇÃO 2 e POSIÇÃO 3)
+      row.appendChild(createDCellWithDate(data[4]));
+      row.appendChild(createDCellWithDate(data[5]));
+      row.appendChild(createDCellWithDate(data[6]));
+      row.appendChild(createDCellWithDate(data[7]));
+      row.appendChild(createDCellWithDate(data[8]));
+      row.appendChild(createDCellWithDate(data[9]));
       const pontoClrDepCell = document.createElement('td');
       pontoClrDepCell.className = "border px-2 py-1";
       const pontoClrDepSelect = document.createElement('select');
@@ -415,30 +382,25 @@ function createPlanilha(containerId, addBtnId, exportBtnId, exportFilename, isDe
         if(data[10] === optVal) opt.selected = true;
         pontoClrDepSelect.appendChild(opt);
       });
+      pontoClrDepSelect.onchange = saveData;
       pontoClrDepCell.appendChild(pontoClrDepSelect);
       row.appendChild(pontoClrDepCell);
-
-      // 11 - OBSERVAÇÕES (sem duplo clique)
       const obsCell = document.createElement('td');
       obsCell.className = "border px-2 py-1";
       const obsInput = document.createElement('input');
       obsInput.type = "text";
       obsInput.value = data[11] || "";
       obsInput.className = "w-full p-1 border-none outline-none bg-transparent";
-      // Sem ondblclick
+      obsInput.oninput = saveData;
       obsCell.appendChild(obsInput);
       row.appendChild(obsCell);
-
     }
-
     tbody.appendChild(row);
     return row;
   }
-
-  // Inicializa 60 linhas
-  for(let i=0; i<60; i++) addRow();
-
-  // Botão adicionar 100 linhas na parte inferior
+  if (!loadData()) {
+    for(let i=0; i<60; i++) addRow();
+  }
   addLinhaBtn.onclick = () => {
     let firstNewRow = null;
     for(let i=0; i<100; i++) {
@@ -446,93 +408,17 @@ function createPlanilha(containerId, addBtnId, exportBtnId, exportFilename, isDe
       if(!firstNewRow) firstNewRow = newRow;
     }
     if(firstNewRow) firstNewRow.scrollIntoView({behavior:'smooth', block:'nearest'});
+    saveData();
   };
-
-  // Botão exportar
-  exportBtn.onclick = function() {
-    const rows = Array.from(tbody.getElementsByTagName('tr'));
-    const result = [headers];
-    rows.forEach(row => {
-      const cells = Array.from(row.getElementsByTagName('td'));
-      const rowData = cells.map((cell, idx) => {
-        if (isDecolagens && idx === 10) {
-          // PONTO CLR DEP col, select element
-          return cell.querySelector('select').value;
-        }
-        else if ((!isDecolagens && idx === 2) || (isDecolagens && idx === 2)) {
-          // RWY select element for both
-          return cell.querySelector('select').value;
-        } else if (isDecolagens && idx === 10) {
-          return cell.querySelector('select').value;
-        } else if (isDecolagens && idx === 11) {
-          return cell.querySelector('input').value;
-        } else {
-          return cell.querySelector('input').value;
-        }
-      });
-      result.push(rowData);
-    });
-
-    const ws = XLSX.utils.aoa_to_sheet(result);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, exportFilename);
-    XLSX.writeFile(wb, exportFilename + ".xlsx");
+  exportBtn.onclick = () => {
+    const table = conta.querySelector("table");
+    exportTableToExcel(table, exportFilename);
   };
+  globalSaveFunctions.push(saveData);
 }
 
-// Criação das planilhas, indicando que a segunda é DECOLAGENS com colunas alteradas
 createPlanilha("planilha1", "addLinhaBtn1", "exportBtn1", "POUSOS", false);
 createPlanilha("planilha2", "addLinhaBtn2", "exportBtn2", "DECOLAGENS", true);
-
 </script>
-<script>window.parent.postMessage({ action: "ready" }, "*"); 
- 
-window.console = new Proxy(console, {
-  get(target, prop) {
-    if (['log', 'warn', 'error'].includes(prop)) {
-      return new Proxy(target[prop], {
-        apply(fn, thisArg, args) {
-          fn.apply(thisArg, args);
-          window.parent.postMessage({ action: 'console', 
-            type: prop, 
-            args: args.map((arg) => {
-              try {
-                return JSON.stringify(arg).replace(/^["']|["']$/g, '');
-              } catch (e) {
-                return arg;
-              }
-            }) 
-          }, '*');
-        }
-      });
-    }
-    return target[prop];
-  }
-});
-</script>
-<script>window.parent.postMessage({ action: "ready" }, "*"); 
- 
-window.console = new Proxy(console, {
-  get(target, prop) {
-    if (['log', 'warn', 'error'].includes(prop)) {
-      return new Proxy(target[prop], {
-        apply(fn, thisArg, args) {
-          fn.apply(thisArg, args);
-          window.parent.postMessage({ action: 'console', 
-            type: prop, 
-            args: args.map((arg) => {
-              try {
-                return JSON.stringify(arg).replace(/^["']|["']$/g, '');
-              } catch (e) {
-                return arg;
-              }
-            }) 
-          }, '*');
-        }
-      });
-    }
-    return target[prop];
-  }
-});
-</script></body>
+</body>
 </html>
