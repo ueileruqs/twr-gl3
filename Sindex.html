@@ -1,0 +1,30 @@
+async function enviarDadosParaSheets(dados) {
+  const url = "https://script.google.com/macros/s/SEU_WEB_APP_ID/exec"; // substitua pelo URL do seu Web App
+  
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      body: JSON.stringify(dados),
+      headers: { "Content-Type": "application/json" }
+    });
+    
+    const json = await response.json();
+    if(json.status === "ok") {
+      console.log("Dados enviados com sucesso!");
+    } else {
+      console.error("Erro ao enviar dados:", json.message);
+    }
+  } catch(e) {
+    console.error("Erro na requisição:", e);
+  }
+}
+
+// Exemplo de uso:
+const dadosExemplo = {
+  indicativo: "GLO1234",
+  tipoAeronave: "B738",
+  rwy: "15",
+  origemDestino: "SBGL",
+  obs: "Nenhuma"
+};
+enviarDadosParaSheets(dadosExemplo);
